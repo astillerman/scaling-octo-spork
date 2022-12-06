@@ -1,0 +1,82 @@
+```{r}
+library(tidyverse)
+library(ROCR)
+
+email.train <- read.csv('train_email.csv')
+email.test<- read.csv('test_email.csv')
+model1 <- glm(Spam~., data = email.train, family = binomial)
+sum1 <- summary(model1)
+# mean residual deviance
+sum1$deviance/sum1$df.residual
+#---------------------------------------------#
+# 2.
+## for in-sample (training sample)
+predprob.train <- predict(model1, newdata = email.train, type = "response")
+pred <- prediction(predprob.train, email.train$Spam)  # first input is predicted prob.
+perf <- performance(pred, "tpr", "fpr")
+#plot(perf, colorize=TRUE)
+unlist(slot(performance(pred, "auc"), "y.values"))
+
+## for out-of-sample (testing sample)
+predprob.test <- predict(model1, newdata = email.test, type = "response")
+pred <- prediction(predprob.test, email.test$Spam)  # first input is predicted prob.
+perf <- performance(pred, "tpr", "fpr")
+#plot(perf, colorize=TRUE)
+unlist(slot(performance(pred, "auc"), "y.values"))
+#---------------------------------------------#
+
+# 3.
+pcut <- mean(email.train$Spam)
+y.pred.test <- (predprob.test>pcut)*1
+TPR <- sum(email.test$Spam==1 & y.pred.test==1)/sum(email.test$Spam==1)
+FPR <- sum(email.test$Spam==0 & y.pred.test==1)/sum(email.test$Spam==0)
+TNR <- 1-FPR # or sum(bank.test$DLRSN==0 & y.pred.test==0)/sum(bank.test$DLRSN==0)
+FNR <- 1-TPR # or sum(bank.test$DLRSN==1 & y.pred.test==0)/sum(bank.test$DLRSN==1)
+c(TPR=TPR, FPR=FPR, TNR=TNR, FNR=FNR)
+#---------------------------------------------#
+
+# 4.
+cost.FN <- 2
+cost.FP <- 1
+y.true <- email.train$Spam
+pcut <- seq(0.01, 0.5, length.out=100)
+cost.total <- NULL
+for(i in 1:100){
+  y.pred <- (predprob.train>pcut[i])*1
+  FN <- sum(y.true==1 & y.pred==0)
+  FP <- sum(y.true==0 & y.pred==1)
+  
+  cost.total <- c(cost.total, cost.FN*FN+cost.FP*FP)
+}
+plot(pcut, cost.total)
+pcut.opt <- pcut[which.min(cost.total)]
+
+## make binary prediction (for testing sample) based on the optimal pcut
+y.pred.test <- (predprob.test>pcut.opt)*1
+TPR <- sum(email.test$Spam==1 & y.pred.test==1)/sum(email.test$Spam==1)
+FPR <- sum(email.test$Spam==0 & y.pred.test==1)/sum(email.test$Spam==0)
+TNR <- 1-FPR # or sum(bank.test$DLRSN==0 & y.pred.test==0)/sum(bank.test$DLRSN==0)
+FNR <- 1-TPR # or sum(bank.test$DLRSN==1 & y.pred.test==0)/sum(bank.test$DLRSN==1)
+c(TPR=TPR, FPR=FPR, TNR=TNR, FNR=FNR)
+
+## compute total cost (for testing sample)
+FN <- sum(email.test$Spam==1 & y.pred.test==0)
+FP <- sum(email.test$Spam==0 & y.pred.test==1)
+cost.total.pcutopt.test <- cost.FN*FN+cost.FP*FP
+#---------------------------------------------#
+
+# 5. 
+## based on full sample bank1
+library(caret)
+model2<-rbind(email.train, email.test)
+fit.control <- trainControl(method = "cv", number = 10, summaryFunction = twoClassSummary, classProbs = TRUE)
+# note that if AUC is specified, you have to make response variable to be categorical, as.factor() won't work here
+model2 <- mutate(model2, Spam=recode(Spam, `1`="Yes", `0`="No"))
+cv.model2 <- train(
+  form = Spam~., 
+  data = model2,
+  trControl = fit.control,
+  method = "glm",
+  family = "binomial"
+)
+cv.model2$results$ROC
